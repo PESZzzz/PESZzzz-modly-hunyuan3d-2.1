@@ -2,6 +2,15 @@
 
 **English** | [Español](README.es.md)
 
+## New Epic Update :D!
+
+**PESZzzz Modly hunyuan3d-2.1 v1.1.0 is here!**
+Ahem, well, this name *doesn't* make sense. Let's just call it V1.1.0 
+
+Attention Blocks, Surface Loaders, and Postprocessors files are now optimized!
+
+See **all** the changes here: [CHANGELOG.md](CHANGELOG.md)
+
 ## What is this?
 
 Practically, a Modly extension for Hunyuan3D 2.1 designed for Windows AMD users and modest laptops or PCs.
