@@ -11,6 +11,8 @@ Attention Blocks, Surface Loaders, and Postprocessors files are now optimized!
 
 See **all** the changes here: [CHANGELOG.md](CHANGELOG.md)
 
+**PLEASE report any crash or issue**
+
 ## What is this?
 
 Practically, a Modly extension for Hunyuan3D 2.1 designed for Windows AMD users and modest laptops or PCs.
