@@ -6,7 +6,7 @@ All changes will be documented in this file :D!
 
 ## [V1.1.0] - 2026-08-22
 
-## Attention_blocks.py Optimization
+## Attention Blocks Optimization (`attention_blocks.py`)
 
 I attacked the **biggest** family wrecker of all time :D! Let me introduce *you* to... *Attention_blocks.py*
 
