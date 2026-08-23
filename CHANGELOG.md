@@ -6,9 +6,9 @@ All changes will be documented in this file :D!
 
 ## [V1.1.0] - 2026-08-22
 
-### Added:
-
 ## Attention_blocks.py Optimization
+
+I attacked the **biggest** family wrecker of all time :D! Let me introduce *you* to... *Attention_blocks.py*
 
 - **Smart Device Manager**: Auto-detects GPU presence. No GPU? Activates memory-efficient attention slicing automatically. GPU detected? Runs at full speed.
 - **Self-Attention Slicing**: The DiT (Diffusion Transformer) processes tokens in chunks of 1024 instead of all at once. Prevents the O(N²) attention matrix from exploding RAM on laptops.
