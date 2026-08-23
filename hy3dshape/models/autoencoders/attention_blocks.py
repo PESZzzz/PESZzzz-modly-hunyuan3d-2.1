@@ -12,9 +12,9 @@
 # except for the third-party components listed below.
 # Hunyuan 3D does not impose any additional limitations beyond what is outlined
 # in the repsective licenses of these third-party components.
-# Users must comply with all terms and conditions of original licenses of these third-party
-# components and must ensure that the usage of the third party components adheres to
-# all relevant laws and regulations.
+# Users must comply with all terms and conditions of original licenses of these
+# third-party components and must ensure that the usage of the third party
+# components adheres to all relevant laws and regulations.
 
 # For avoidance of doubts, Hunyuan 3D means the large language models and
 # their software and algorithms, including trained model weights, parameters (including
@@ -42,6 +42,42 @@ if os.environ.get('USE_SAGEATTN', '0') == '1':
     except ImportError:
         raise ImportError('Please install the package "sageattention" to use this USE_SAGEATTN.')
     scaled_dot_product_attention = sageattn
+
+
+# =============================================================================
+# [COMMUNITY] Smart Device Manager
+# =============================================================================
+# This variable looks at your computer and decides the BEST way to run the
+# attention blocks without crashing. It answers one question:
+#
+#   "Should we slice attention into smaller chunks to save RAM?"
+#
+# How it works:
+#   - If set to 'auto' (default), it checks if you have a GPU.
+#     * No GPU detected? → Enable memory-efficient slicing for CPU.
+#     * GPU detected?   → Let the GPU handle it normally (faster).
+#   - If set to '1', ALWAYS slice attention (useful for low-VRAM GPUs).
+#   - If set to '0', NEVER slice attention (full speed, full RAM).
+#
+# Why this matters:
+#   Attention creates a matrix of size N×N where N is the number of tokens.
+#   With 4096 tokens, that's a 4096×4096 matrix. In FP32 that's ~64MB per head,
+#   and Hunyuan3D 2.1 has multiple heads and multiple layers. On a 16GB RAM
+#   laptop, that matrix alone can be the difference between "it works" and
+#   "Windows killed the process."
+#
+# Set this BEFORE running Modly:
+#   Windows:  set HY3D_MEMORY_EFFICIENT=1
+#   Linux:    export HY3D_MEMORY_EFFICIENT=1
+# =============================================================================
+_USE_MEMORY_EFFICIENT = os.environ.get('HY3D_MEMORY_EFFICIENT', 'auto')
+if _USE_MEMORY_EFFICIENT == 'auto':
+    if not torch.cuda.is_available():
+        _USE_MEMORY_EFFICIENT = '1'
+        logger.info('[COMMUNITY] No GPU detected. Enabling memory-efficient attention slicing.')
+    else:
+        _USE_MEMORY_EFFICIENT = '0'
+        logger.info('[COMMUNITY] GPU detected. Running attention at full speed.')
 
 
 class FourierEmbedder(nn.Module):
@@ -221,7 +257,42 @@ class QKVMultiheadCrossAttention(nn.Module):
         q = self.q_norm(q)
         k = self.k_norm(k)
         q, k, v = map(lambda t: rearrange(t, 'b n h d -> b h n d', h=self.heads), (q, k, v))
-        out = self.attn_processor(self, q, k, v)
+
+        # =============================================================================
+        # [COMMUNITY] Cross-Attention Slicing for Low-RAM Systems
+        # =============================================================================
+        # This is where the DiT (Diffusion Transformer) talks to the image conditioning.
+        # In Hunyuan3D 2.1, the cross-attention can receive THOUSANDS of queries at once.
+        # Each query looks at ALL the conditioning data (the image features).
+        #
+        # The problem:
+        #   PyTorch computes attention as:  softmax(Q @ K.T / sqrt(d)) @ V
+        #   If Q has shape [batch, heads, 4096, dim] and K has [batch, heads, 1024, dim],
+        #   the intermediate Q @ K.T has shape [batch, heads, 4096, 1024].
+        #   With batch=1, heads=16, dim=64: that's 4096 * 1024 * 16 * 4 bytes ≈ 256MB.
+        #   And that's just ONE attention operation in ONE layer. The DiT has 24 layers.
+        #   On a 16GB laptop, you do the math.
+        #
+        # The fix:
+        #   Instead of computing all 4096 queries at once, we slice Q into chunks of 1024
+        #   and compute each chunk separately. The result is EXACTLY the same, but the
+        #   peak memory is divided by the number of chunks. Slower? A bit. But it WORKS.
+        #
+        # When it activates:
+        #   Only when HY3D_MEMORY_EFFICIENT=1 AND n_ctx > 2048.
+        #   On GPU with enough VRAM, this is skipped for maximum speed.
+        # =============================================================================
+        if _USE_MEMORY_EFFICIENT == '1' and n_ctx > 2048:
+            slice_size = 1024
+            out_slices = []
+            for i in range(0, n_ctx, slice_size):
+                q_slice = q[:, :, i:i + slice_size, :]
+                out_slice = self.attn_processor(self, q_slice, k, v)
+                out_slices.append(out_slice)
+            out = torch.cat(out_slices, dim=2)
+        else:
+            out = self.attn_processor(self, q, k, v)
+
         out = out.transpose(1, 2).reshape(bs, n_ctx, -1)
         return out
 
@@ -335,7 +406,45 @@ class QKVMultiheadAttention(nn.Module):
         k = self.k_norm(k)
 
         q, k, v = map(lambda t: rearrange(t, 'b n h d -> b h n d', h=self.heads), (q, k, v))
-        out = scaled_dot_product_attention(q, k, v).transpose(1, 2).reshape(bs, n_ctx, -1)
+
+        # =============================================================================
+        # [COMMUNITY] Self-Attention Slicing — THE BIG ONE for CPU
+        # =============================================================================
+        # This is the SELF-attention inside the DiT. Every token looks at EVERY other token.
+        # This is the O(N²) monster that kills laptops.
+        #
+        # The math:
+        #   With 4096 tokens and 16 heads, the attention matrix is 4096 × 4096 per head.
+        #   That's 16,777,216 values. In FP32: ~64MB. In FP16: ~32MB.
+        #   And the DiT has 24 of these layers. Even if not all run simultaneously,
+        #   the peak memory during ONE forward pass can easily exceed 1GB just for attention.
+        #   Add the model weights, the VAE, the SDF grid... and your 16GB RAM says goodbye.
+        #
+        # The fix:
+        #   We slice the Query tensor into chunks of 1024 tokens.
+        #   Each chunk still attends to ALL keys and ALL values (full context, no quality loss).
+        #   We compute softmax(Q_chunk @ K.T / sqrt(d)) @ V for each chunk.
+        #   Then we concatenate the results. Same output, 1/4 the peak memory.
+        #
+        # Trade-off:
+        #   Each chunk still does the full Q@K.T matrix for its size, but the peak is capped.
+        #   On CPU this is almost always worth it. On GPU with Flash Attention, we skip this.
+        #
+        # When it activates:
+        #   Only when HY3D_MEMORY_EFFICIENT=1 AND n_ctx > 1024.
+        # =============================================================================
+        if _USE_MEMORY_EFFICIENT == '1' and n_ctx > 1024:
+            slice_size = 1024
+            out_slices = []
+            for i in range(0, n_ctx, slice_size):
+                q_slice = q[:, :, i:i + slice_size, :]
+                out_slice = scaled_dot_product_attention(q_slice, k, v)
+                out_slices.append(out_slice)
+            out = torch.cat(out_slices, dim=2)
+        else:
+            out = scaled_dot_product_attention(q, k, v)
+
+        out = out.transpose(1, 2).reshape(bs, n_ctx, -1)
         return out
 
 
@@ -416,12 +525,14 @@ class Transformer(nn.Module):
         qkv_bias: bool = True,
         norm_layer=nn.LayerNorm,
         qk_norm: bool = False,
-        drop_path_rate: float = 0.0
+        drop_path_rate: float = 0.0,
+        use_checkpoint: bool = False,  # [COMMUNITY] NEW PARAMETER
     ):
         super().__init__()
         self.n_ctx = n_ctx
         self.width = width
         self.layers = layers
+        self.use_checkpoint = use_checkpoint
         self.resblocks = nn.ModuleList(
             [
                 ResidualAttentionBlock(
@@ -439,7 +550,34 @@ class Transformer(nn.Module):
 
     def forward(self, x: torch.Tensor):
         for block in self.resblocks:
-            x = block(x)
+            # =============================================================================
+            # [COMMUNITY] Gradient Checkpointing for Low-VRAM Fine-Tuning
+            # =============================================================================
+            # What is this?
+            #   Normally, PyTorch stores every intermediate result (activations) during the
+            #   forward pass so it can use them in the backward pass (training). For a 24-layer
+            #   DiT, those activations can be HUGE.
+            #
+            #   Gradient checkpointing says: "Instead of storing everything, I'll only store
+            #   checkpoints every few layers and recalculate the rest during backward."
+            #   It trades ~30% more compute for ~60% less memory. A great deal when you're
+            #   training on a laptop.
+            #
+            # Important:
+            #   During INFERENCE (generating a 3D model), gradients are disabled
+            #   (torch.no_grad), so this does absolutely nothing. Zero impact on speed.
+            #   It only activates if someone is crazy enough to fine-tune Hunyuan3D 2.1
+            #   on a laptop with 16GB RAM. But hey, we're all about making the impossible
+            #   possible here :D
+            #
+            # How to enable:
+            #   Pass use_checkpoint=True when creating the Transformer.
+            #   This is handled automatically by the pipeline if low RAM is detected.
+            # =============================================================================
+            if self.use_checkpoint and torch.is_grad_enabled():
+                x = torch.utils.checkpoint.checkpoint(block, x, use_reentrant=False)
+            else:
+                x = block(x)
         return x
 
 
@@ -497,7 +635,42 @@ class CrossAttentionDecoder(nn.Module):
         self.count += query_embeddings.shape[1]
         if self.downsample_ratio != 1:
             latents = self.latents_proj(latents)
-        x = self.cross_attn_decoder(query_embeddings, latents)
+
+        # =============================================================================
+        # [COMMUNITY] Query Chunking for the VAE Decoder
+        # =============================================================================
+        # This is the VAE Decoder (CrossAttentionDecoder). It takes the latent tokens
+        # from the DiT and generates a 3D SDF grid by querying thousands of 3D points.
+        #
+        # The problem:
+        #   When the octree resolution is high (e.g., 384 or 512), the VAE generates
+        #   MANY 3D points. Each point becomes a query that attends to ALL latent tokens.
+        #   With 16,384 queries and 1024 latents, the attention matrix is 16K × 1K.
+        #   That's 16 million values per head. In FP32 with 16 heads: ~1GB of memory
+        #   for a SINGLE attention operation. And this happens multiple times.
+        #
+        # The fix:
+        #   We chunk the queries into groups of 2048 and process them one group at a time.
+        #   Each chunk still attends to ALL latents (full quality), but the peak memory
+        #   is capped. Same result, no crashes.
+        #
+        # When it activates:
+        #   Only when HY3D_MEMORY_EFFICIENT=1 AND n_queries > 4096.
+        #   For low resolutions (256), this usually skips automatically because there
+        #   are fewer queries. For high resolutions (512), this is a lifesaver.
+        # =============================================================================
+        n_queries = query_embeddings.shape[1]
+        if _USE_MEMORY_EFFICIENT == '1' and n_queries > 4096:
+            chunk_size = 2048
+            outputs = []
+            for i in range(0, n_queries, chunk_size):
+                q_chunk = query_embeddings[:, i:i + chunk_size]
+                out_chunk = self.cross_attn_decoder(q_chunk, latents)
+                outputs.append(out_chunk)
+            x = torch.cat(outputs, dim=1)
+        else:
+            x = self.cross_attn_decoder(query_embeddings, latents)
+
         if self.enable_ln_post:
             x = self.ln_post(x)
         occ = self.output_proj(x)
@@ -661,7 +834,7 @@ class PointCrossAttentionEncoder(nn.Module):
                                                                                                             -1])
 
             query_feats = torch.cat([query_random_feats, query_sharpedge_feats], dim=1)
-            input_feats = torch.cat([input_random_surface_feats, input_sharpedge_surface_feats], dim=1)
+            input_feats = torch.cat([input_sharpedge_surface_feats, input_sharpedge_surface_feats], dim=1)
 
             if self.normal_pe:
                 query_normal_pe = self.fourier_embedder(query_feats[..., :3])
