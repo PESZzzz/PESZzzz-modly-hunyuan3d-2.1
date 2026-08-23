@@ -11,6 +11,8 @@ Los archivos attention Blocks, Surface Loaders y Postprocessors ahora están opt
 
 Puedes ver **todos** los cambios aquí (en inglés): [CHANGELOG.md](CHANGELOG.md)
 
+**POR FAVOR REPORTA CUALQUIER PROBLEMA**
+
 ## ¿Qué es esto?
 
 Prácticamente, una extensión de Modly para Hunyuan3D 2.1 diseñada para usuarios de AMD en Windows y laptops o PCs modestas.
