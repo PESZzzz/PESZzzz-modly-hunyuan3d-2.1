@@ -4,10 +4,10 @@
 
 ## New Epic Update :D!
 
-**PESZzzz Modly hunyuan3d-2.1 v1.1.0 is here!**
-Ahem, well, this name *doesn't* make sense. Let's just call it V1.1.0 
+**PESZzzz Modly hunyuan3d-2.1 v1.1.1 is here!**
+Wait, wait, wait. Modly got an update, and nobody told me that my extension is broken?
 
-Attention Blocks, Surface Loaders, and Postprocessors files are now optimized!
+Well, now it's patched
 
 See **all** the changes here: [CHANGELOG.md](CHANGELOG.md)
 
