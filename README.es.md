@@ -4,10 +4,10 @@
 
 ## Nueva actualización to' wapa :D!
 
-**PESZzzz Modly hunyuan3d-2.1 v1.1.0 está aquí!**
-Sí, bueno... el nombre no tiene sentido. Solo digamosle V1.1.0 
+**PESZzzz Modly hunyuan3d-2.1 v1.1.1 está aquí!**
+Espera, espera, espera. ¿Se ha actualizado Modly y nadie me ha dicho que mi extensión no funciona?
 
-Los archivos attention Blocks, Surface Loaders y Postprocessors ahora están optimizados!
+Bueno, pues ya está arreglada.
 
 Puedes ver **todos** los cambios aquí (en inglés): [CHANGELOG.md](CHANGELOG.md)
 
