@@ -6,7 +6,7 @@ All changes will be documented in this file :D!
 
 ## [V1.1.0] - 2026-08-22
 
-Just Modly things, doesn't matter
+Just Modly things, it doesn't matter
 
 ## [V1.1.0] - 2026-08-22
 
