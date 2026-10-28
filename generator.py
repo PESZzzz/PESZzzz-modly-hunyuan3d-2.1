@@ -176,6 +176,35 @@ class Hunyuan3D21Generator(BaseGenerator):
         shape_weights_dir = self._weights_dir / "generate"
         _log(f"Loading pipeline from: {shape_weights_dir}")
 
+        # --- PARCHE DE COMPATIBILIDAD PARA TRANSFORMERS / MODLY ---
+        # Intercepta load_state_dict para renombrar las llaves de atención al vuelo
+        original_load_state_dict = torch.nn.Module.load_state_dict
+
+        def patched_load_state_dict(self_module, state_dict, strict=True):
+            new_sd = {}
+            remapped = False
+            for k, v in state_dict.items():
+                new_k = k
+                if ".attention.attention.query." in new_k:
+                    new_k = new_k.replace(".attention.attention.query.", ".attention.q_proj.")
+                    remapped = True
+                elif ".attention.attention.key." in new_k:
+                    new_k = new_k.replace(".attention.attention.key.", ".attention.k_proj.")
+                    remapped = True
+                elif ".attention.attention.value." in new_k:
+                    new_k = new_k.replace(".attention.attention.value.", ".attention.v_proj.")
+                    remapped = True
+                elif ".attention.output.dense." in new_k:
+                    new_k = new_k.replace(".attention.output.dense.", ".attention.o_proj.")
+                    remapped = True
+                new_sd[new_k] = v
+            if remapped:
+                _log(f"[Patch] Remapped state_dict keys for {self_module.__class__.__name__}")
+            return original_load_state_dict(self_module, new_sd, strict=strict)
+
+        torch.nn.Module.load_state_dict = patched_load_state_dict
+        # ---------------------------------------------------------
+
         try:
             self._model = PipelineClass.from_pretrained(
                 str(shape_weights_dir),
@@ -189,6 +218,9 @@ class Hunyuan3D21Generator(BaseGenerator):
             _log(f"FAILED to load model: {e}")
             traceback.print_exc()
             raise
+        finally:
+            # Restaurar la función original de PyTorch pase lo que pase
+            torch.nn.Module.load_state_dict = original_load_state_dict
 
         _log("=== load() END ===")
 
