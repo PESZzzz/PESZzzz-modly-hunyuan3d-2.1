@@ -4,7 +4,7 @@ All changes will be documented in this file :D!
 
 ... By AI, I'm so dumb for this.
 
-## [V1.1.0] - 2026-08-22
+## [V1.1.1] - 2026-08-22
 
 Just Modly things, it doesn't matter
 
